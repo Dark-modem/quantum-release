@@ -1,0 +1,4 @@
+c882e7051e61ccddebb65369d2a8edc2755c00cef3b022c0e28497c34a2e575a  quantum-agent-linux-amd64
+e939f5150f0478489af306da288c71c5b11178f0fe6596e9b4b7a2a4fb8331ff  quantum-agent-linux-arm64
+6ebc9e8a0d7f7ae055508bce1ec8cf4becb9d6cfc3d31242582fd1ab1cf3636c  quantum-panel-linux-amd64
+52322640aa5f51075e202172e75031705cfbb4821c0f8ded6844b317618f8dc9  quantum-panel-linux-arm64
