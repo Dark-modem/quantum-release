@@ -30,8 +30,8 @@ PANEL_REPO="${QUANTUM_PANEL_REPO:-$WORKSPACES/quantum-panel}"
 AGENT_REPO="${QUANTUM_AGENT_REPO:-$WORKSPACES/quantum-agent}"
 
 # INTEGRATION-DONE.md SHAs (update there first; overridable by env).
-PANEL_SHA="${PANEL_SHA:-51e160235447}"
-AGENT_SHA="${AGENT_SHA:-0f76219c81f8}"
+PANEL_SHA="${PANEL_SHA:-55a61bc23617}"
+AGENT_SHA="${AGENT_SHA:-ba37723}"
 
 SIGNING_KEY="${QUANTUM_SIGNING_KEY:-$HOME/.quantum-release/dev-signing.key}"
 OUT="$RELEASE_ROOT/dist/quantum-bundle-$VERSION"
