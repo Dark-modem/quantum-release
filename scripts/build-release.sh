@@ -19,6 +19,16 @@
 ###############################################################################
 set -euo pipefail
 
+# GO-2026-66xx/6809: go1.23.4 stdlib (net/http, crypto/x509, mime/multipart)
+# has known vulns fixed in 1.26.x — SECURITY-AUDIT-PANEL.md H2. Pin the
+# toolchain so every release binary is built with the fixed stdlib.
+export GOTOOLCHAIN="${GOTOOLCHAIN:-go1.26.9}"
+# The toolchain module itself needs sumdb verification; private modules
+# stay excluded via GOPRIVATE (set by the caller or below).
+export GOSUMDB="${GOSUMDB:-sum.golang.org}"
+export GOPRIVATE="${GOPRIVATE:-github.com/Dark-modem/*}"
+export GOFLAGS="${GOFLAGS:--mod=mod}"
+
 VERSION="${1:?usage: build-release.sh <version> (e.g. v0.3.0)}"
 case "$VERSION" in v[0-9]*) ;; *) echo "version must look like v0.3.0" >&2; exit 1;; esac
 
@@ -30,8 +40,8 @@ PANEL_REPO="${QUANTUM_PANEL_REPO:-$WORKSPACES/quantum-panel}"
 AGENT_REPO="${QUANTUM_AGENT_REPO:-$WORKSPACES/quantum-agent}"
 
 # INTEGRATION-DONE.md SHAs (update there first; overridable by env).
-PANEL_SHA="${PANEL_SHA:-55a61bc23617}"
-AGENT_SHA="${AGENT_SHA:-ba37723}"
+PANEL_SHA="${PANEL_SHA:-4e0611c9b28b}"
+AGENT_SHA="${AGENT_SHA:-fb5a57aeb8b3}"
 
 SIGNING_KEY="${QUANTUM_SIGNING_KEY:-$HOME/.quantum-release/dev-signing.key}"
 OUT="$RELEASE_ROOT/dist/quantum-bundle-$VERSION"
