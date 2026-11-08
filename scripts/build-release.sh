@@ -91,7 +91,7 @@ build_one() { # repo sha module outname versionpkg arch [extra_ldflags]
     local wt="$repo/.release-build"
     git -C "$repo" worktree add --detach "$wt" "$sha" >/dev/null 2>&1
     ( cd "$wt" && GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-        go build -trimpath -ldflags "-s -w -X $cmdpkg.$vpkg=$VERSION $extra" \
+        go build -trimpath -ldflags "-s -w -X $vpkg=$VERSION $extra" \
         -o "$OUT/bin/$out" "$cmdpkg" 2>&1 | head -5 \
       || { echo "BUILD FAILED: $out ($arch)"; exit 1; } )
     git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 || true
