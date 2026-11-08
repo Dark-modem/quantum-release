@@ -104,9 +104,9 @@ for arch in $ARCHS; do
         go tool dist list | grep -q linux/arm64 || { echo "no arm64 in toolchain; skipping"; continue; }
     fi
     build_one "$PANEL_REPO" "$PANEL_SHA" ./cmd/quantum-panel \
-        "quantum-panel-linux-$arch" panel "$arch" || exit 1
+        "quantum-panel-linux-$arch" main.panelVersion "$arch" || exit 1
     build_one "$AGENT_REPO" "$AGENT_SHA" ./cmd/quantum-agent \
-        "quantum-agent-linux-$arch" agent "$arch" \
+        "quantum-agent-linux-$arch" github.com/Dark-modem/quantum-agent/internal/agent.panelVersion "$arch" \
         "-X github.com/Dark-modem/quantum-agent/internal/agent.engineArtifactPubKeyB64=$ENGINE_PUB_B64" || exit 1
 done
 
