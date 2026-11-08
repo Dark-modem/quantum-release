@@ -89,7 +89,8 @@ for ARCH in amd64 arm64; do
     if [ -n "$FROM" ] && [ -f "$FROM/$UPNAME" ]; then
         cp "$FROM/$UPNAME" "$ARC"; echo "   offline: $UPNAME"
     else
-        fetch "$URL" "$ARC"
+        fetch "$URL" "$ARC" || { echo "  DOWNLOAD FAILED: $URL" >&2; exit 1; }
+        [ -s "$ARC" ] || { echo "  DOWNLOAD EMPTY: $URL" >&2; exit 1; }
     fi
     # Upstream checksum verification WHEN published.
     if [ -n "${SHA_URL:-}" ]; then
@@ -114,18 +115,47 @@ for ARCH in amd64 arm64; do
     fi
 
     # Extract and repackage: <inner>/ with binaries + LICENSE + SOURCE.txt.
+    # Upstream shapes handled: tar.gz (most), FLAT .gz single binaries
+    # (chisel), ZIP (rathole, Xray-core) and single-bundle tar.gz with
+    # per-arch binary names (udp2raw — use {arch} in BINARIES).
     SRC="$WORK/src-$ARCH"
-    mkdir -p "$SRC"
-    tar -xzf "$ARC" -C "$SRC"
-    INNER_DIR="$(tpl "${INNER:-}")"
-    BASE="$SRC/${INNER_DIR:-}"
-    [ -d "$BASE" ] || BASE="$SRC"
+    rm -rf "$SRC"; mkdir -p "$SRC"
+    # INNER names the directory the REPACKED tarball carries; when the
+    # conf omits it, default to <engine>_<ver> (never empty — tar -czf ""
+    # creates an "empty member name" archive).
+    INNER_DIR="$(tpl "${INNER:-${ENGINE}_${VER}}")"
+    ARCHNAME="$ARCH"                     # {arch} in BINARIES/UPSTREAM_BIN
+    case "$ARCH" in
+        arm64) ARCHNAME="${UPSTREAM_ARM64_NAME:-arm64}";;
+    esac
+    case "$UPNAME" in
+        *.tar.gz|*.tgz)
+            tar -xzf "$ARC" -C "$SRC"
+            BASE="$SRC/${INNER_DIR:-}"
+            [ -d "$BASE" ] || BASE="$SRC"
+            ;;
+        *.gz)
+            FIRSTBIN="${BINARIES%% *}"
+            gunzip -c "$ARC" > "$SRC/$FIRSTBIN"
+            chmod 755 "$SRC/$FIRSTBIN"
+            BASE="$SRC"
+            ;;
+        *.zip)
+            ( cd "$SRC" && unzip -q "$ARC" ) || { echo "  unzip failed: $ARC" >&2; exit 1; }
+            BASE="$SRC/${INNER_DIR:-}"
+            [ -d "$BASE" ] || BASE="$SRC"
+            ;;
+        *) echo "unknown archive shape: $ARC" >&2; exit 1;;
+    esac
     ART="$WORK/pack-$ARCH"
     mkdir -p "$ART/$INNER_DIR"
     for BIN in $BINARIES; do
-        FOUND="$(find "$SRC" -type f -name "$BIN" | head -1)"
+        # {arch} in a binary name = the upstream ships per-arch names
+        # inside ONE bundle (udp2raw_amd64 / udp2raw_aarch64).
+        WANT="$(sed "s/{arch}/$ARCHNAME/g" <<< "$BIN")"
+        FOUND="$(find "$SRC" -type f -name "$WANT" | head -1)"
         if [ -z "$FOUND" ]; then
-            echo "binary $BIN not found in upstream archive" >&2
+            echo "binary $WANT not found in upstream archive" >&2
             exit 1
         fi
         cp "$FOUND" "$ART/$INNER_DIR/$BIN"
