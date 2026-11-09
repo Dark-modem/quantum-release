@@ -86,14 +86,78 @@ checkout_sha() { # repo sha name
 checkout_sha "$PANEL_REPO" "$PANEL_SHA" quantum-panel
 checkout_sha "$AGENT_REPO" "$AGENT_SHA" quantum-agent
 
-build_one() { # repo sha module outname versionpkg arch [extra_ldflags]
-    local repo="$1" sha="$2" cmdpkg="$3" out="$4" vpkg="$5" arch="$6" extra="${7:-}"
+build_one() { # repo sha module outname versionpkg shaPkg timePkg arch [extra_ldflags]
+    # PHASE 14 (RUNBOOK-FIXES 25/31): the old version silenced `worktree add`
+    # failures (>/dev/null 2>&1) and the subshell's `exit 1` never propagated
+    # (the trailing `worktree remove || true` became the return status) — a
+    # stale `.release-build` tree then built OLD code under a FRESH version
+    # stamp, which is exactly how RC3/RC4 shipped binaries that did not
+    # match their announced SHAs (PHASE8-ACCEPTANCE). Every step below is
+    # fatal, and the checked-out tree is PROVEN before the build runs.
+    local repo="$1" sha="$2" cmdpkg="$3" out="$4" vpkg="$5" shaPkg="$6" timePkg="$7" arch="$8" extra="${9:-}"
     local wt="$repo/.release-build"
-    git -C "$repo" worktree add --detach "$wt" "$sha" >/dev/null 2>&1
-    ( cd "$wt" && GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-        go build -trimpath -ldflags "-s -w -X $vpkg=$VERSION $extra" \
-        -o "$OUT/bin/$out" "$cmdpkg" 2>&1 | head -5 \
-      || { echo "BUILD FAILED: $out ($arch)"; exit 1; } )
+
+    # 1. no stale worktree may survive from an aborted run
+    git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 || true
+    git -C "$repo" worktree prune >/dev/null 2>&1 || true
+    rm -rf "$wt"
+    if [ -e "$wt" ]; then
+        echo "FATAL: cannot clear the stale build tree $wt" >&2
+        return 1
+    fi
+
+    # 2. add the detached worktree — LOUD (no redirect hides a failure)
+    if ! git -C "$repo" worktree add --detach "$wt" "$sha"; then
+        echo "FATAL: git worktree add failed for $repo @ $sha" >&2
+        return 1
+    fi
+
+    # 3. PROVE the tree: HEAD must equal the requested SHA…
+    local got
+    got="$(git -C "$wt" rev-parse HEAD)"
+    if [ "$got" != "$sha" ]; then
+        echo "FATAL: worktree HEAD $got != requested $sha for $out" >&2
+        git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 || true
+        return 1
+    fi
+    # …and the tree must be CLEAN (no +dirty in the buildinfo, ever)
+    if [ -n "$(git -C "$wt" status --porcelain)" ]; then
+        echo "FATAL: worktree for $repo @ $sha is DIRTY:" >&2
+        git -C "$wt" status --porcelain | head -5 >&2
+        git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 || true
+        return 1
+    fi
+
+    # 4. build with the full provenance stamps (version/SHA/time; the Go
+    #    version is runtime.Version() read by the binary itself)
+    local gover build_time
+    gover="$(go version | awk '{print $3}')"
+    build_time="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    if ! ( cd "$wt" && GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+        go build -trimpath -ldflags "-s -w \
+            -X $vpkg=$VERSION \
+            -X $shaPkg=$sha \
+            -X $timePkg=$build_time \
+            $extra" \
+        -o "$OUT/bin/$out" "$cmdpkg" ); then
+        echo "FATAL: BUILD FAILED: $out ($arch)" >&2
+        git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 || true
+        return 1
+    fi
+    if [ ! -f "$OUT/bin/$out" ]; then
+        echo "FATAL: compiler reported success but $out is missing" >&2
+        return 1
+    fi
+
+    # 5. record the stamps for the post-build verification + MANIFEST
+    {
+        echo "arch=$arch"
+        echo "sha=$sha"
+        echo "build_time=$build_time"
+        echo "go_version=$gover"
+        echo "version=$VERSION"
+    } > "$OUT/bin/$out.buildinfo"
+
     git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 || true
 }
 
@@ -104,9 +168,17 @@ for arch in $ARCHS; do
         go tool dist list | grep -q linux/arm64 || { echo "no arm64 in toolchain; skipping"; continue; }
     fi
     build_one "$PANEL_REPO" "$PANEL_SHA" ./cmd/quantum-panel \
-        "quantum-panel-linux-$arch" github.com/Dark-modem/quantum-panel/internal/panel.panelVersion "$arch" || exit 1
+        "quantum-panel-linux-$arch" \
+        github.com/Dark-modem/quantum-panel/internal/panel.panelVersion \
+        github.com/Dark-modem/quantum-panel/internal/panel.buildSHA \
+        github.com/Dark-modem/quantum-panel/internal/panel.buildTime \
+        "$arch" || exit 1
     build_one "$AGENT_REPO" "$AGENT_SHA" ./cmd/quantum-agent \
-        "quantum-agent-linux-$arch" github.com/Dark-modem/quantum-agent/internal/agent.panelVersion "$arch" \
+        "quantum-agent-linux-$arch" \
+        github.com/Dark-modem/quantum-agent/internal/agent.panelVersion \
+        github.com/Dark-modem/quantum-agent/internal/agent.buildSHA \
+        github.com/Dark-modem/quantum-agent/internal/agent.buildTime \
+        "$arch" \
         "-X github.com/Dark-modem/quantum-agent/internal/agent.engineArtifactPubKeyB64=$ENGINE_PUB_B64" || exit 1
 done
 
@@ -115,6 +187,12 @@ echo "== engine-artifact public key (pinned into the agent binaries) =="
 # (docs/ENGINE-ARTIFACTS.md: engine-artifacts/engine-pub.b64) — keeps the
 # bundle self-consistent: what the binaries verify == what the store uses.
 printf '%s\n' "$ENGINE_PUB_B64" > "$OUT/bin/engine-pub.b64"
+echo "engine-key pin fingerprint: $(printf '%s' "$ENGINE_PUB_B64" | sha256sum | awk '{print substr($1,1,16)}') (build-release.sh — pack-engine.sh must print the SAME)"
+
+# PHASE 14: post-build verification runs as a separate script (see
+# post-build-verify.sh) — it runs the built binaries and asserts their
+# provenance; a failure exits the release loudly.
+( bash "./post-build-verify.sh" "/bin" "" "" "" ) || exit 1
 
 echo "== installers (copied as-is from the agent repo @ $AGENT_SHA) =="
 git -C "$AGENT_REPO" show "$AGENT_SHA":install-agent.sh > "$OUT/install-agent.sh"
@@ -129,6 +207,103 @@ sign() { openssl pkeyutl -sign -rawin -inkey "$SIGNING_KEY" -in "$1" -out "$1.si
   for f in quantum-*; do sign "$f"; done
   sign checksums.txt )
 openssl pkey -in "$SIGNING_KEY" -pubout -out "$OUT/signing-public.pem" 2>/dev/null
+
+# ============================================================================
+# PHASE 14 — MANIFEST.json: the signed provenance document inside the bundle
+# (RUNBOOK-FIXES 25/31). It records the announced SHAs, the binaries'
+# self-reported provenance (version --json), the generated engine set, the
+# migration count, sizes, sha256s, build host and time — everything an
+# operator (or session 3) needs to prove the bundle matches its announcement.
+# The file is signed with the release key; verify-bundle.sh checks it.
+# ============================================================================
+"/bin/quantum-panel-linux-amd64" version --json > /tmp/.rc-panel-vj.json 2>/dev/null
+"/bin/quantum-agent-linux-amd64" version --json > /tmp/.rc-agent-vj.json 2>/dev/null
+MANIFEST="$OUT/MANIFEST.json"
+PANEL_AMD="$(awk '$2=="quantum-panel-linux-amd64"{print $1}' "$OUT/bin/checksums.txt")"
+PANEL_ARM="$(awk '$2=="quantum-panel-linux-arm64"{print $1}' "$OUT/bin/checksums.txt")"
+AGENT_AMD="$(awk '$2=="quantum-agent-linux-amd64"{print $1}' "$OUT/bin/checksums.txt")"
+AGENT_ARM="$(awk '$2=="quantum-agent-linux-arm64"{print $1}' "$OUT/bin/checksums.txt")"
+PANEL_BINFO="$OUT/bin/quantum-panel-linux-amd64.buildinfo"
+AGENT_BINFO="$OUT/bin/quantum-agent-linux-amd64.buildinfo"
+PANEL_VJ="$("$OUT/bin/quantum-panel-linux-amd64" version --json 2>/dev/null)"
+AGENT_VJ="$("$OUT/bin/quantum-agent-linux-amd64" version --json 2>/dev/null)"
+BUILD_HOST="$(hostname)"
+BUILD_HOST_USER="$(whoami)"
+ENGNAME_MAP="matrix:matrix FRP:frp Backhaul:backhaul Xray:xray Wg:wireguard Wst:wstunnel Chisel:chisel Gost:gost Rathole:rathole"
+EXP_ENGINES=""
+for CN in $(git -C "$AGENT_REPO" show "$AGENT_SHA":internal/agent/matrix_driver.go \
+    | grep -oE 'reg\.Register\(New[A-Za-z]+Driver\(\)\)' \
+    | sed -E "s/reg\.Register\(New([A-Za-z]+)Driver\(\)\)/\1/" | sort -u); do
+    ID="$(printf '%s\n' "$ENGNAME_MAP" | tr ' ' '\n' | grep "^$CN:" | cut -d: -f2)"
+    [ -n "$ID" ] || { echo "FATAL: unmapped driver $CN in MANIFEST generation" >&2; exit 1; }
+    EXP_ENGINES="$EXP_ENGINES,$ID"
+done
+EXP_ENGINES="${EXP_ENGINES#,}"
+python3 - "$MANIFEST" <<PYMAN
+import json, os, sys, subprocess
+
+out = sys.argv[1]
+panel_amd = "$PANEL_AMD"; panel_arm = "$PANEL_ARM"
+agent_amd = "$AGENT_AMD"; agent_arm = "$AGENT_ARM"
+
+def binfo(path):
+    d = {}
+    if os.path.exists(path):
+        for line in open(path):
+            k, _, v = line.strip().partition('=')
+            if v: d[k] = v
+    return d
+
+pj = json.loads(open('/tmp/.rc-panel-vj.json').read()) if os.path.exists('/tmp/.rc-panel-vj.json') else {}
+aj = json.loads(open('/tmp/.rc-agent-vj.json').read()) if os.path.exists('/tmp/.rc-agent-vj.json') else {}
+man = {
+  "manifest_version": 1,
+  "release": "$VERSION",
+  "built_at": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
+  "build_host": "$BUILD_HOST",
+  "built_by": "$BUILD_HOST_USER",
+  "go_version": "$(go version | awk '{print $3}')",
+  "sources": {
+    "panel": {"sha": "$PANEL_SHA", "repo": "github.com/Dark-modem/quantum-panel"},
+    "agent": {"sha": "$AGENT_SHA", "repo": "github.com/Dark-modem/quantum-agent"},
+    "protocol": {"sha": "${PROTOCOL_SHA:-unknown}", "repo": "github.com/Dark-modem/quantum-protocol"}
+  },
+  "binaries": {
+    "quantum-panel-linux-amd64": {"sha256": "$PANEL_AMD", "size": os.path.getsize("$OUT/bin/quantum-panel-linux-amd64"), "build": binfo("$PANEL_BINFO")},
+    "quantum-panel-linux-arm64": {"sha256": "$PANEL_ARM", "size": os.path.getsize("$OUT/bin/quantum-panel-linux-arm64"), "build": binfo("$PANEL_BINFO")},
+    "quantum-agent-linux-amd64": {"sha256": "$AGENT_AMD", "size": os.path.getsize("$OUT/bin/quantum-agent-linux-amd64"), "build": binfo("$AGENT_BINFO")},
+    "quantum-agent-linux-arm64": {"sha256": "$AGENT_ARM", "size": os.path.getsize("$OUT/bin/quantum-agent-linux-arm64"), "build": binfo("$AGENT_BINFO")}
+  },
+  "panel_version": pj.get("version", "$VERSION"),
+  "panel_migrations": pj.get("migrations"),
+  "panel_flags": pj.get("flags", {}),
+  "panel_features": pj.get("features", []),
+  "agent_version": aj.get("version", "$VERSION"),
+  "agent_engines": aj.get("engines", []),
+  "expected_agent_engines": [e for e in "$EXP_ENGINES".split(',') if e],
+  "engine_artifact_key_sha256": "$(printf '%s' "$ENGINE_PUB_B64" | sha256sum | awk '{print $1}')",
+  "engine_key_pin_fingerprint": "$(printf '%s' "$ENGINE_PUB_B64" | sha256sum | awk '{print substr($1,1,16)}')"
+}
+json.dump(man, open(out, 'w'), indent=2, sort_keys=True)
+print('MANIFEST.json written')
+PYMAN
+sign "$MANIFEST"
+echo "== MANIFEST.json: signed provenance document =="
+grep -E '"release"|"panel"|"agent"' "$MANIFEST" | head -4
+
+# RELEASE-READY lines are GENERATED from the signed MANIFEST — no
+# hand-written hashes (RUNBOOK-FIXES 31).
+RC_LINE="$(python3 - "$MANIFEST" <<PYRC
+import json, sys
+m = json.load(open(sys.argv[1]))
+print("RC6: dist/quantum-bundle-{}.zip <zip-sha256> protocol {} panel {} agent {} engines {}".format(
+    m["release"], m["sources"]["protocol"]["sha"], m["sources"]["panel"]["sha"],
+    m["sources"]["agent"]["sha"], "dist/engines-2026-11-08/ (unchanged from RC4)"))
+PYRC
+)"
+printf '%s\n' "$RC_LINE" > "$OUT/RC-LINE.txt"
+echo "RC line (for RELEASE-READY.md): $RC_LINE"
+
 
 # RUNBOOK-FIXES items 1/17: the RELEASE-READY binary-hash table and the
 # installer copy-paste commands MUST come from the shipped bundle's own

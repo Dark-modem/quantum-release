@@ -78,6 +78,9 @@ if [ ! -f "$SIGNING_KEY" ]; then
     DEV_KEY=1
 fi
 PUB_B64="$(openssl pkey -in "$SIGNING_KEY" -pubout -outform DER 2>/dev/null | base64 -w0)"
+# RUNBOOK-FIXES 27: print the key FINGERPRINT — build-release.sh prints the
+# same fingerprint for the agent pin; they must match.
+echo "engine-key pin fingerprint: $(printf '%s' "$PUB_B64" | sha256sum | awk '{print substr($1,1,16)}') (pack-engine.sh)"
 
 UPSTREAM_SHA_NOTE="upstream checksum: not published by the project"
 for ARCH in amd64 arm64; do
