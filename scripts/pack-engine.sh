@@ -83,6 +83,19 @@ PUB_B64="$(openssl pkey -in "$SIGNING_KEY" -pubout -outform DER 2>/dev/null | ba
 echo "engine-key pin fingerprint: $(printf '%s' "$PUB_B64" | sha256sum | awk '{print substr($1,1,16)}') (pack-engine.sh)"
 
 UPSTREAM_SHA_NOTE="upstream checksum: not published by the project"
+# Public key snippet for the agent build (must match the panel's
+# engine-pub.b64) — written BEFORE the per-arch loop so even a PARTIAL
+# pack (one arch failed upstream) self-identifies the key its artifacts
+# were signed with; verify-engines.sh depends on it.
+{
+    echo "engine-artifact public key (base64 DER SPKI) for the panel's"
+    echo "engine-artifacts/engine-pub.b64 AND the agent build pin:"
+    echo "$PUB_B64"
+    if [ -n "${DEV_KEY:-}" ]; then
+        echo "WARNING: this is a freshly generated DEV key — replace before production."
+    fi
+} > "$OUTDIR/ENGINE-PUB-KEY.txt"
+
 for ARCH in amd64 arm64; do
     URLVAR="URL_$(echo "$ARCH" | tr a-z A-Z)"
     URL="$(tpl "${!URLVAR:?missing $URLVAR in $CONF}")"
@@ -156,8 +169,7 @@ for ARCH in amd64 arm64; do
             # binaries with no archive wrapper): accept only when the
             # fetched file really is an ELF binary (magic 7f 45 4c 46) —
             # anything else keeps the unknown-shape error.
-            if [ "$(head -c4 "$ARC" 2>/dev/null | od -An -tx1 | tr -d ' 
-')" = "7f454c46" ]; then
+            if [ "$(head -c4 "$ARC" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]; then
                 FIRSTBIN="${BINARIES%% *}"
                 cp "$ARC" "$SRC/$FIRSTBIN"
                 chmod 755 "$SRC/$FIRSTBIN"
@@ -224,17 +236,6 @@ for ARCH in amd64 arm64; do
     } >> "$OUTDIR/UPLOAD-COMMANDS.txt"
     echo "   packed: $NAME (sha256 $SHA)"
 done
-
-# Public key snippet for the agent build (must match the panel's
-# engine-pub.b64) — exactly the doc/ENGINE-ARTIFACTS.md flow.
-{
-    echo "engine-artifact public key (base64 DER SPKI) for the panel's"
-    echo "engine-artifacts/engine-pub.b64 AND the agent build pin:"
-    echo "$PUB_B64"
-    if [ -n "${DEV_KEY:-}" ]; then
-        echo "WARNING: this is a freshly generated DEV key — replace before production."
-    fi
-} > "$OUTDIR/ENGINE-PUB-KEY.txt"
 
 echo "DONE: $OUTDIR"
 ls -la "$OUTDIR"

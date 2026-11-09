@@ -101,13 +101,41 @@ else:
 print("   MANIFEST internal consistency OK")
 PY
 
-# 5. the RELEASE-READY RC line, generated from the MANIFEST
-python3 - "$D" <<'PY' || exit 1
-import json, os, sys
-d = sys.argv[1]
+# 5. the RELEASE-READY RC line: when the announcement file travels with the
+#    zip (sibling <zip>.RC-LINE.txt), its SHAs must match the signed MANIFEST
+#    and its zip hash must be the hash of THIS zip — RELEASE-READY.md then
+#    cannot point at a different zip. Inside a zip the RC line would be
+#    circular (a zip cannot contain its own hash), so it ships outside.
+SIB="${ZIP%.zip}.RC-LINE.txt"
+THIS_ZIP_SHA="$(sha256sum "$ZIP" | awk '{print $1}')"
+if [ -f "$SIB" ]; then
+    RC_LINE="$(cat "$SIB")"
+elif [ -f "$D/RC-LINE.txt" ]; then
+    RC_LINE="$(cat "$D/RC-LINE.txt")"
+else
+    RC_LINE=""
+fi
+if [ -n "$RC_LINE" ]; then
+    python3 - "$D" "$RC_LINE" "$THIS_ZIP_SHA" <<'PY' || exit 1
+import json, os, re, sys
+d, line, zsha = sys.argv[1], sys.argv[2], sys.argv[3]
 m = json.load(open(os.path.join(d, "MANIFEST.json")))
-print("RC6: dist/quantum-bundle-{}.zip <zip-sha256> protocol {} panel {} agent {} engines {}".format(
-    m["release"], m["sources"]["protocol"]["sha"], m["sources"]["panel"]["sha"],
-    m["sources"]["agent"]["sha"], m.get("engines_folder", "dist/engines-2026-11-08/")))
+hashes = re.findall(r"\b[0-9a-f]{40,64}\b", line)
+if len(hashes) < 4:
+    sys.stderr.write("RC line lacks the four hashes (zip/protocol/panel/agent): " + line + "\n")
+    sys.exit(1)
+if hashes[0] != zsha:
+    sys.stderr.write("RC line announces zip " + hashes[0] + " but THIS zip is " + zsha + "\n")
+    sys.exit(1)
+for pos, key in ((2, "panel"), (3, "agent"), (1, "protocol")):
+    want = m["sources"][key]["sha"]
+    if hashes[pos] != want:
+        sys.stderr.write("RC line %s SHA %s != MANIFEST %s\n" % (key, hashes[pos], want))
+        sys.exit(1)
+print("RC line matches THIS zip and the signed MANIFEST")
 PY
+    echo "$RC_LINE"
+else
+    echo "NOTE: no RC-LINE.txt next to the zip — the RELEASE-READY RC line was not cross-checked"
+fi
 ok "bundle verified end to end"

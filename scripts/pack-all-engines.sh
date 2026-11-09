@@ -22,14 +22,14 @@ OUT="${1:?usage: pack-all-engines.sh <outdir> [engine=version ...]}"; shift
 # Default pinned versions (keep in sync with the drivers; overrides below).
 declare -A VER=(
     [frp]=0.61.1 [backhaul]=0.7.2 [rathole]=0.5.0 [gost]=3.3.3
-    [wstunnel]=10.1.9 [chisel]=1.10.1 [xray]=24.12.31 [udp2raw]=20230206.0
+    [wstunnel]=10.1.9 [chisel]=1.10.1 [xray]=24.12.31 [udp2raw]=20230206.0 [ctunnel]=1.1.1
 )
 # Overrides from argv.
 while [ $# -gt 0 ]; do
     v="${1#*=}"; k="${1%%=*}"
     VER["$k"]="$v"; shift
 done
-ORDER=(frp backhaul rathole gost wstunnel chisel xray udp2raw)
+ORDER=(frp backhaul rathole gost wstunnel chisel xray udp2raw ctunnel)
 
 mkdir -p "$OUT"
 FAILED=()
