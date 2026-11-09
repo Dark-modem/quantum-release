@@ -99,7 +99,10 @@ for ARCH in amd64 arm64; do
     if [ -n "${SHA_URL:-}" ]; then
         SUMS="$WORK/upstream-sums-$ARCH.txt"
         if fetch "$(tpl "$SHA_URL")" "$SUMS" 2>/dev/null; then
-            want="$(grep "$(basename "$ARC")" "$SUMS" | awk '{print $1}' | head -1)"
+            # The sums file lists UPSTREAM asset names; ARC's local name is
+            # <engine>-<ver>-<arch>.tgz regardless of the upstream shape —
+            # try the upstream name (fixed-string) first, then the local one.
+            want="$( { grep -F "$UPNAME" "$SUMS" || grep -F "$(basename "$ARC")" "$SUMS"; } | awk '{print $1}' | head -1)"
             got="$(sha256sum "$ARC" | awk '{print $1}')"
             if [ -z "$want" ]; then
                 echo "   NOTE: upstream checksum file has no entry for $(basename "$ARC") — skipped"
@@ -148,7 +151,20 @@ for ARCH in amd64 arm64; do
             BASE="$SRC/${INNER_DIR:-}"
             [ -d "$BASE" ] || BASE="$SRC"
             ;;
-        *) echo "unknown archive shape: $ARC" >&2; exit 1;;
+        *)
+            # RAW single-file assets (e.g. CIAUB/C-Tunnel ships bare ELF
+            # binaries with no archive wrapper): accept only when the
+            # fetched file really is an ELF binary (magic 7f 45 4c 46) —
+            # anything else keeps the unknown-shape error.
+            if [ "$(head -c4 "$ARC" 2>/dev/null | od -An -tx1 | tr -d ' 
+')" = "7f454c46" ]; then
+                FIRSTBIN="${BINARIES%% *}"
+                cp "$ARC" "$SRC/$FIRSTBIN"
+                chmod 755 "$SRC/$FIRSTBIN"
+                BASE="$SRC"
+            else
+                echo "unknown archive shape: $ARC" >&2; exit 1
+            fi;;
     esac
     ART="$WORK/pack-$ARCH"
     mkdir -p "$ART/$INNER_DIR"
