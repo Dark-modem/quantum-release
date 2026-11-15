@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/installer_lifecycle_test.sh — phase-14 TASK 2: the RC6 bundle's
+# tests/installer_lifecycle_test.sh — phase-14 TASK 2: the bundle's
 # installers are exercised in a clean ubuntu:24.04 container
 # (quantum-test-installers-lc), as far as a systemd-free container allows:
 #
@@ -12,12 +12,14 @@
 #      reports active, the upgrade ROLLS BACK to the previous binary.
 #   D. panel --upgrade keeps config and rolls back the same way.
 #
-# Uses the binaries + installers FROM THE RC6 BUNDLE (what actually ships).
+# BACKEND-27: parameterized — the rc6 zip path + fixed container name were
+# hardcoded; the bundle top dir is now derived from the zip itself.
+# Usage: installer_lifecycle_test.sh [bundle-zip]   (default: the rc6 zip)
 set -euo pipefail
 export MSYS_NO_PATHCONV=1
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-CT="quantum-test-installers-lc"
-ZIP="$PWD/dist/quantum-bundle-v0.3.4-rc6.zip"
+CT="${LIFECYCLE_CT:-quantum-test-installers-lc}"
+ZIP="${1:-$PWD/dist/quantum-bundle-v0.3.4-rc6.zip}"
 WORK="$PWD/tests/.lifecycle-work"
 
 cleanup() {
@@ -32,7 +34,8 @@ docker info >/dev/null 2>&1 || { echo "SKIP: docker not reachable"; trap - EXIT;
 
 rm -rf "$WORK"; mkdir -p "$WORK"
 unzip -q "$ZIP" -d "$WORK"
-BD="$WORK/quantum-bundle-v0.3.4-rc6"
+BD="$(find "$WORK" -maxdepth 1 -mindepth 1 -type d | head -1)"
+[ -n "$BD" ] || { echo "FAIL: the zip has no top-level directory"; exit 1; }
 
 docker rm -f "$CT" >/dev/null 2>&1 || true
 docker run -d --name "$CT" ubuntu:24.04 sleep 3600 >/dev/null
