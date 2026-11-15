@@ -30,7 +30,23 @@ export GOPRIVATE="${GOPRIVATE:-github.com/Dark-modem/*}"
 export GOFLAGS="${GOFLAGS:--mod=mod}"
 
 VERSION="${1:?usage: build-release.sh <version> (e.g. v0.3.0)}"
-case "$VERSION" in v[0-9]*) ;; *) echo "version must look like v0.3.0" >&2; exit 1;; esac
+# BACKEND-27 (rc7 dry-run): a *-dryrun name runs the FULL pipeline (build,
+# post-build verify, MANIFEST, zip) but is explicitly NOT a release — it
+# exists to prove the pipeline and expose blockers before the real rc7.
+# Everything release-specific keeps failing closed for real v* names.
+case "$VERSION" in
+    *-dryrun) DRYRUN=1 ;;
+    v[0-9]*)  DRYRUN=0 ;;
+    *) echo "version must look like v0.3.0 (real release) or <name>-dryrun (pipeline dry-run)" >&2; exit 1;;
+esac
+if [ "$DRYRUN" = 1 ]; then
+    cat >&2 <<DRYWARN
+#######################################################################
+# DRY-RUN: $VERSION is NOT a release. Do not tag, do not publish,     #
+# do not upload these artifacts anywhere — pipeline verification only. #
+#######################################################################
+DRYWARN
+fi
 
 # Repo locations relative to this script: ../../quantum-{panel,agent}
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -348,9 +364,23 @@ if [ -z "$PROTO_PANEL" ] || [ -z "$PROTO_AGENT" ]; then
   echo "FATAL: could not extract the quantum-protocol SHA from go.mod (panel='$PROTO_PANEL' agent='$PROTO_AGENT')" >&2
   exit 1
 fi
+# BACKEND-27: the guard stays FATAL for every real release. A *-dryrun may
+# proceed ONLY with an explicit second opt-in (QUANTUM_ALLOW_PROTOCOL_MISMATCH=1)
+# and then RECORDS the mismatch in the MANIFEST so it cannot hide (the rc7
+# dry-run needs this: panel main pins 9b9a27c, agent main still pins 244d10f
+# until DEV-AGENT bumps it — that blocker is exactly what the dry-run reports).
+PROTO_PIN_MISMATCH=0
 if [ "$PROTO_PANEL" != "$PROTO_AGENT" ]; then
-  echo "FATAL: panel and agent pin DIFFERENT protocol commits (panel=$PROTO_PANEL agent=$PROTO_AGENT)" >&2
-  exit 1
+  if [ "$DRYRUN" = 1 ] && [ "${QUANTUM_ALLOW_PROTOCOL_MISMATCH:-0}" = "1" ]; then
+    echo "DRY-RUN WARNING: panel and agent pin DIFFERENT protocol commits (panel=$PROTO_PANEL agent=$PROTO_AGENT)" >&2
+    echo "  proceeding ONLY because this is a *-dryrun with QUANTUM_ALLOW_PROTOCOL_MISMATCH=1;" >&2
+    echo "  a REAL release (v*) still fails closed here until the pins match." >&2
+    PROTO_PIN_MISMATCH=1
+  else
+    echo "FATAL: panel and agent pin DIFFERENT protocol commits (panel=$PROTO_PANEL agent=$PROTO_AGENT)" >&2
+    echo "       (a *-dryrun may proceed with QUANTUM_ALLOW_PROTOCOL_MISMATCH=1 — never a real release)" >&2
+    exit 1
+  fi
 fi
 PROTOCOL_SHA="$(git -C "$PANEL_REPO/../quantum-protocol" rev-parse "${PROTO_PANEL}^{commit}" 2>/dev/null || echo "$PROTO_PANEL")"
 # The expected engine set / migration count come from ONE place: expected.json,
@@ -404,7 +434,9 @@ man = {
   "sources": {
     "panel": {"sha": "$PANEL_SHA", "repo": "github.com/Dark-modem/quantum-panel"},
     "agent": {"sha": "$AGENT_SHA", "repo": "github.com/Dark-modem/quantum-agent"},
-    "protocol": {"sha": "${PROTOCOL_SHA:-unknown}", "repo": "github.com/Dark-modem/quantum-protocol"}
+    "protocol": {"sha": "${PROTOCOL_SHA:-unknown}", "repo": "github.com/Dark-modem/quantum-protocol",
+                 "panel_pin": "$PROTO_PANEL", "agent_pin": "$PROTO_AGENT",
+                 "pin_mismatch": "$PROTO_PIN_MISMATCH"}
   },
   "binaries": {
     "quantum-panel-linux-amd64": {"sha256": "$PANEL_AMD", "size": os.path.getsize("$OUT/bin/quantum-panel-linux-amd64"), "build": binfo("$PANEL_BINFO")},
@@ -436,10 +468,17 @@ grep -E '"release"|"panel"|"agent"' "$MANIFEST" | head -4
 # scripts/verify-engines.sh <dir> does that check.
 ENGINES_DIR="${ENGINES_DIR:-dist/engines-2026-11-09}"
 [ -d "$RELEASE_ROOT/$ENGINES_DIR" ] || { echo "FATAL: ENGINES_DIR $RELEASE_ROOT/$ENGINES_DIR does not exist" >&2; exit 1; }
+# BACKEND-27: the label used to be hardcoded "RC6:" — the rc7 build would
+# have announced itself as RC6. Derive it from the version instead.
+case "$VERSION" in
+    *-rc[0-9]*) RC_LABEL="RC${VERSION##*-rc}" ;;
+    *-dryrun)   RC_LABEL="RC-DRAFT" ;;
+    *)          RC_LABEL="RC-LINE" ;;
+esac
 RC_LINE="$(python3 - "$MANIFEST" "$ENGINES_DIR" <<PYRC
 import json, sys
 m = json.load(open(sys.argv[1]))
-print("RC6: dist/quantum-bundle-{}.zip <zip-sha256> protocol {} panel {} agent {} engines {}".format(
+print("$RC_LABEL: dist/quantum-bundle-{}.zip <zip-sha256> protocol {} panel {} agent {} engines {}".format(
     m["release"], m["sources"]["protocol"]["sha"], m["sources"]["panel"]["sha"],
     m["sources"]["agent"]["sha"], sys.argv[2]))
 PYRC
