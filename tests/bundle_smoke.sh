@@ -1,30 +1,33 @@
 #!/usr/bin/env bash
-# tests/bundle_smoke.sh — phase-14 RC6 bundle smoke: start the panel BINARY
-# FROM THE RELEASE ZIP in a quantum-test-bundle container, fetch the
-# dashboard HTML/JS and assert the A3 UI markers are really inside (the
-# phase-8 lesson: announced features must be IN the shipped binary), and
-# assert the binary's version --json provenance matches the bundle's
-# MANIFEST.json. Container is removed afterwards with proof.
+# tests/bundle_smoke.sh — bundle smoke: start the panel BINARY FROM THE
+# RELEASE ZIP in a container, fetch the dashboard HTML/JS and assert the UI
+# markers are really inside (the phase-8 lesson: announced features must be
+# IN the shipped binary), and assert the binary's version --json provenance
+# matches the bundle's MANIFEST.json. Container is removed afterwards with
+# proof.
 #
-# Runs from Git Bash (docker.exe lives there); the linux binaries' provenance
-# check runs under WSL (they are ELF).
+# BACKEND-27: parameterized — the rc6 zip/version/container names were
+# hardcoded, which made the test unusable for any other bundle.
+# Usage: bundle_smoke.sh [bundle-zip] [expected-version]   (defaults: rc6)
 set -euo pipefail
 export MSYS_NO_PATHCONV=1   # container paths must not become C:\Program Files\Git\...
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-CT="quantum-test-bundle"
-ZIP_ABS="$(cygpath -w "$PWD/dist/quantum-bundle-v0.3.4-rc6.zip")"
+ZIP="${1:-$PWD/dist/quantum-bundle-v0.3.4-rc6.zip}"
+EXPECT_VER="${2:-v0.3.4-rc6}"
+CT="${BUNDLE_SMOKE_CT:-quantum-test-bundle}"
+ZIP_ABS="$(cygpath -w "$ZIP")"
 # Git Bash /c/... → WSL /mnt/c/...
 to_wsl() { printf '%s' "$1" | sed -E 's|^/([a-zA-Z])/|/mnt/\1/|'; }
-ZIP_WSL="$(to_wsl "$(cygpath -u "$PWD/dist/quantum-bundle-v0.3.4-rc6.zip")")"
+ZIP_WSL="$(to_wsl "$(cygpath -u "$ZIP")")"
 PROV_WSL="$(to_wsl "$(cygpath -u "$PWD/tests/bundle_provenance_wsl.sh")")"
 cleanup() {
     docker rm -f "$CT" >/dev/null 2>&1 || true
     echo "== proof: the smoke container is gone =="
-    docker ps -a --format '{{.Names}}' | grep -x 'quantum-test-bundle' && echo "LEFTOVER!" || echo "quantum-test-bundle: none ✓"
+    docker ps -a --format '{{.Names}}' | grep -x "$CT" && echo "LEFTOVER!" || echo "$CT: none ✓"
 }
 trap cleanup EXIT
 docker info >/dev/null 2>&1 || { echo "SKIP: docker not reachable"; trap - EXIT; exit 0; }
-[ -f "dist/quantum-bundle-v0.3.4-rc6.zip" ] || { echo "FAIL: zip missing"; exit 1; }
+[ -f "$ZIP" ] || { echo "FAIL: zip missing: $ZIP"; exit 1; }
 
 echo "== provenance: the bundle panel binary self-report must match MANIFEST.json =="
 # both the run and the comparison happen under WSL (linux ELF + python3)
@@ -57,9 +60,10 @@ done
 echo "bundle panel is up"
 
 echo "== fetching the dashboard + its assets and asserting the phase-11/A3 UI markers =="
-docker exec -i "$CT" python - <<'PYMARK'
+docker exec -i "$CT" python - "$EXPECT_VER" <<'PYMARK'
 import urllib.request, sys, re
 base = 'http://127.0.0.1:8000'
+VER = sys.argv[1]
 def get(p):
     return urllib.request.urlopen(base + p, timeout=5).read().decode()
 html = get('/ui/')
@@ -71,7 +75,7 @@ def want(name, cond):
         fails.append(name)
 
 # the dashboard itself carries the version stamp of THIS release
-want('version stamp v0.3.4-rc6 in dashboard', 'v0.3.4-rc6' in html)
+want('version stamp ' + VER + ' in dashboard', VER in html)
 # the phase-11 mesh management UI is served standalone (mesh.js)
 mesh = get('/ui/mesh.js')
 want('mesh.js served with the mesh wizard', len(mesh) > 50000 and 'mesh-wizard' in mesh)

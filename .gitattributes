@@ -1,0 +1,8 @@
+# Everything in this repo runs on Linux (WSL gate, servers, containers).
+# Keep scripts LF in the working tree even on Windows checkouts — a CRLF
+# shell script dies under bash with `set: pipefail: invalid option name`.
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.conf text eol=lf
