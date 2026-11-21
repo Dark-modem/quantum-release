@@ -3,8 +3,24 @@
 # verification FROM THE SOURCE at the announced SHAs (phase 14, never
 # hand-written). Writes expected.json next to the bundle's buildinfo files.
 # Usage: gen-expected.py <panel-repo> <panel-sha> <agent-repo> <agent-sha> <out-json>
+#
+# CORES-2 LEDGER MOVE: the derived engine-id list is cross-checked against
+# the Dark-modem/quantum-cores MANIFEST.json files — the CANONICAL ledger
+# of external engine cores. Every mapped engine id must be an exempt
+# in-process/kernel engine (matrix = ships with the agent binary, wireguard
+# = host kernel module; documented in the ledger README "Exemptions") or
+# have a <id>/MANIFEST.json in the ledger — anything else is FATAL (a new
+# engine without a published core must stop the pipeline here).
+# LEDGER SOURCE (least fragile, by CORES-2 decision): a LOCAL clone only,
+# no network at run time — $QUANTUM_CORES_DIR, else the sibling
+# ../quantum-cores of this repo (the 01-REPOSITORIES workspace layout).
+# A missing ledger is FATAL unless QUANTUM_ALLOW_NO_CORES_LEDGER=1 — the
+# documented downgrade (legacy expected-list in use, ledger rail OFF, loud
+# warning; runner scripts for builds from WSL-side clones must set
+# QUANTUM_CORES_DIR accordingly). Rail 1 below (fatal on unmapped driver
+# NAMES) stays active in every mode — it is in-repo by design.
 
-import json, re, subprocess, sys
+import json, os, re, subprocess, sys
 
 panel_repo, panel_sha, agent_repo, agent_sha, out = sys.argv[1:6]
 
@@ -22,6 +38,7 @@ migrations = len(re.findall(r"^\t`", block, re.M))
 vers = re.findall(r"// (\d+):", block)
 
 # agent engines: every Register call in NewAgentEngines, mapped mechanically
+# (RAIL 1 — fatal on unmapped driver names; preserved verbatim per CORES-2)
 ENGNAME_MAP = {"Matrix": "matrix", "FRP": "frp", "Backhaul": "backhaul", "Xray": "xray",
                "Wg": "wireguard", "Wst": "wstunnel", "Chisel": "chisel", "Gost": "gost",
                "Rathole": "rathole", "Ctunnel": "ctunnel"}
@@ -33,6 +50,23 @@ for cn in names:
     if not eid:
         sys.exit("FATAL: registered driver %s has no id in ENGNAME_MAP — the source added a driver; add it" % cn)
     engines.append(eid)
+
+# CORES-2 LEDGER MOVE (RAIL 2): every mapped engine id must exist in the
+# quantum-cores ledger — <id>/MANIFEST.json — unless exempt (see header).
+LEDGER = os.environ.get("QUANTUM_CORES_DIR") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "quantum-cores")
+EXEMPT = ("matrix", "wireguard")
+if os.path.isdir(LEDGER):
+    unledgered = [e for e in set(engines)
+                  if e not in EXEMPT and not os.path.isfile(os.path.join(LEDGER, e, "MANIFEST.json"))]
+    if unledgered:
+        sys.exit("FATAL: engines without a quantum-cores ledger manifest: %s — pack + publish the core (tag <core>-vX.Y.Z in Dark-modem/quantum-cores) before shipping" % ", ".join(sorted(unledgered)))
+    print("ledger: engine ids all covered by %s" % os.path.abspath(LEDGER))
+elif os.environ.get("QUANTUM_ALLOW_NO_CORES_LEDGER") == "1":
+    print("WARNING: LEDGER SKIPPED — no quantum-cores clone at %s and QUANTUM_ALLOW_NO_CORES_LEDGER=1: legacy expected-list in use, ledger rail OFF" % LEDGER,
+          file=sys.stderr)
+else:
+    sys.exit("FATAL: quantum-cores ledger not found at %s — set QUANTUM_CORES_DIR to a clone of https://github.com/Dark-modem/quantum-cores (public) or keep it as the sibling ../quantum-cores of this repo, or set QUANTUM_ALLOW_NO_CORES_LEDGER=1 (documented downgrade: ledger check skipped)" % LEDGER)
 
 # panel feature markers: the version_json.go buildFeatures list
 vsrc = src(panel_repo, panel_sha, "internal/panel/version_json.go")
