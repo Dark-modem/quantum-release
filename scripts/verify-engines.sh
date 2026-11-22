@@ -63,9 +63,13 @@ cd "$DIR" || { echo "no dir $DIR"; exit 1; }
 FAIL=0; OK=0
 for PK in *-pack; do
     [ -d "$PK" ] || continue
-    # ledger identity: <core>-<version>-pack
+    # ledger identity: <core>-<version>-pack. RC10-PREP: the version strip
+    # must take the LAST dash (${##*-}), not the first (${#*-}) — dashed
+    # core names (sing-box-1.14.4) made the old first-dash strip yield
+    # VER="box-1.14.4" and a bogus tag. Versions are digits+dots (coresTagRe)
+    # so the last-dash strip is exact for every legal name.
     BASE="${PK%-pack}"
-    CORE="${BASE%-*}"; VER="${BASE#*-}"; TAG="$CORE-v$VER"
+    CORE="${BASE%-*}"; VER="${BASE##*-}"; TAG="$CORE-v$VER"
     if [ -n "$LEDGER_MANIFESTS" ]; then
         if ! printf '%s\n' "$LEDGER_MANIFESTS" | grep -qF "$CORE|$TAG|"; then
             echo "LEDGER FAIL: $PK has no manifest for tag $TAG in quantum-cores — pack + publish the core or drop the pack"

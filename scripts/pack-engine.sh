@@ -133,6 +133,56 @@ for ARCH in amd64 arm64; do
         echo "   $UPSTREAM_SHA_NOTE"
     fi
 
+    # PASSTHROUGH packs (RC10-PREP): with PASSTHROUGH=1 in the conf, the
+    # fetched archive IS the artifact — byte-identical to the published
+    # quantum-cores release asset (the cores side packaged + digest-verified
+    # it: OVERNIGHT-C hysteria/sing-box, C2+A4 waterwall, D2 easytier, the
+    # A5 xray v26.3.27 repackage). The pack re-signs those bytes with the
+    # ENGINE-ARTIFACT key, so verify-engines.sh's ledger rail (pack sha256
+    # == ledger manifest sha256) holds BY CONSTRUCTION. The ledger digest
+    # (<ENGINE>-v<VER> assets[linux-<arch>] in QUANTUM_CORES_DIR or the
+    # sibling ../quantum-cores) is the canonical verify — a drift or a
+    # missing ledger asset is FATAL unless the documented ledger downgrade
+    # is set (then SHA_URL, when configured, is the only check).
+    if [ "${PASSTHROUGH:-0}" = "1" ]; then
+        NAME="$ENGINE-$VERSION-linux-$ARCH.tar.gz"
+        cp "$ARC" "$OUTDIR/$NAME"
+        LEDGER_DIR="${QUANTUM_CORES_DIR:-$RELEASE_ROOT/../quantum-cores}"
+        LSHA="$(python3 - "$LEDGER_DIR" "$ENGINE" "$ENGINE-v$VERSION" "linux-$ARCH" <<'PYPASS'
+import json, os, sys
+ledger, core, tag, osarch = sys.argv[1:5]
+p = os.path.join(ledger, core, "MANIFEST.json")
+try:
+    d = json.load(open(p, encoding="utf-8"))
+except FileNotFoundError:
+    print("")
+    raise SystemExit(0)
+for v in d.get("versions", []):
+    if v.get("tag") == tag:
+        a = (v.get("assets") or {}).get(osarch) or {}
+        print(a.get("sha256", ""))
+        break
+PYPASS
+)" || LSHA=""
+        if [ -z "$LSHA" ] && [ "${QUANTUM_ALLOW_NO_CORES_LEDGER:-0}" != "1" ] && [ ! -d "$LEDGER_DIR" ]; then
+            echo "FATAL: passthrough pack needs the quantum-cores ledger at $LEDGER_DIR (no $ENGINE-v$VERSION manifest found) — set QUANTUM_CORES_DIR or QUANTUM_ALLOW_NO_CORES_LEDGER=1 (documented downgrade)" >&2
+            exit 1
+        fi
+        if [ -n "$LSHA" ]; then
+            GOT="$(sha256sum "$OUTDIR/$NAME" | awk '{print $1}')"
+            if [ "$GOT" != "$LSHA" ]; then
+                echo "LEDGER FAIL: $NAME sha256 drift — pack ${GOT:0:16}… vs ledger ${LSHA:0:16}…" >&2
+                exit 1
+            fi
+            echo "   ledger sha256 OK (byte-identical to the $ENGINE-v$VERSION cores asset)"
+        else
+            echo "   WARNING: LEDGER SKIPPED (QUANTUM_ALLOW_NO_CORES_LEDGER=1) — passthrough sha256 not verified against the ledger" >&2
+        fi
+        if [ ! -f "$OUTDIR/LICENSE-$ENGINE.txt" ] && [ -n "${LICENSE_URL:-}" ]; then
+            fetch "$(tpl "$LICENSE_URL")" "$OUTDIR/LICENSE-$ENGINE.txt" 2>/dev/null || true
+        fi
+        echo "   passthrough: $NAME (no repack — the cores asset is the artifact)"
+    else
     # Extract and repackage: <inner>/ with binaries + LICENSE + SOURCE.txt.
     # Upstream shapes handled: tar.gz (most), FLAT .gz single binaries
     # (chisel), ZIP (rathole, Xray-core) and single-bundle tar.gz with
@@ -215,6 +265,7 @@ for ARCH in amd64 arm64; do
 
     NAME="$ENGINE-$VERSION-linux-$ARCH.tar.gz"
     ( cd "$ART" && tar -czf "$OUTDIR/$NAME" "$INNER_DIR" )
+    fi   # PASSTHROUGH branch (repack path only)
     SHA="$(sha256sum "$OUTDIR/$NAME" | awk '{print $1}')"
     echo "$SHA  $NAME" > "$OUTDIR/$NAME.sha256"
     openssl pkeyutl -sign -rawin -inkey "$SIGNING_KEY" -in "$OUTDIR/$NAME" -out "$WORK/$NAME.sig"
