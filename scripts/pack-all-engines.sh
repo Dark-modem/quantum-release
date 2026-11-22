@@ -6,10 +6,22 @@
 # drivers pin (read from internal/agent driver code — kept in sync here):
 #
 #   frp 0.61.1 · backhaul 0.7.2 · rathole 0.5.0 · gost 3.3.3 ·
-#   wstunnel 10.1.9 · chisel 1.10.1 · xray 24.12.31 · udp2raw 20230206.0 ·
+#   wstunnel 10.1.9 · chisel 1.10.1 · xray 26.3.27 · udp2raw 20230206.0 ·
 #   ctunnel 2.0.0 (packed FROM the human-provided source snapshot via --from
 #   staging archives — see engines/ctunnel.conf; an all-engines re-pack needs
-#   those staged or ctunnel fails loudly)
+#   those staged or ctunnel fails loudly) · hysteria 2.14.0 · sing-box 1.14.4 ·
+#   waterwall 1.6.0 · easytier 2.7.1
+#
+# RC10-PREP (13 cores): the overnight cores join — hysteria/sing-box (C),
+# waterwall (C2+A4), easytier (D2) and the xray bump to v26.3.27 (A5, the
+# hysteria2 carrier) are PASSTHROUGH packs (engines/*.conf PASSTHROUGH=1):
+# the quantum-cores release asset IS the artifact — byte-identical to the
+# ledger manifest digest (verify-engines.sh rail 2 holds by construction).
+# easytier has NO registered driver yet (the D2 wiring spec is the next
+# wave) — its pack is pre-staged so the R5 manifest serves it the moment
+# the driver lands. naive is NOT packed: no core exists (the D2 hold —
+# upstream's Chromium tags violate the cores tag contract; a human
+# tag-exception is the unblock).
 #
 # wireguard uses the KERNEL module — no upstream binary; the packer states
 # that in INDEX.md instead of silently skipping.
@@ -25,14 +37,15 @@ OUT="${1:?usage: pack-all-engines.sh <outdir> [engine=version ...]}"; shift
 # Default pinned versions (keep in sync with the drivers; overrides below).
 declare -A VER=(
     [frp]=0.61.1 [backhaul]=0.7.2 [rathole]=0.5.0 [gost]=3.3.3
-    [wstunnel]=10.1.9 [chisel]=1.10.1 [xray]=24.12.31 [udp2raw]=20230206.0 [ctunnel]=2.0.0
+    [wstunnel]=10.1.9 [chisel]=1.10.1 [xray]=26.3.27 [udp2raw]=20230206.0 [ctunnel]=2.0.0
+    [hysteria]=2.14.0 [sing-box]=1.14.4 [waterwall]=1.6.0 [easytier]=2.7.1
 )
 # Overrides from argv.
 while [ $# -gt 0 ]; do
     v="${1#*=}"; k="${1%%=*}"
     VER["$k"]="$v"; shift
 done
-ORDER=(frp backhaul rathole gost wstunnel chisel xray udp2raw ctunnel)
+ORDER=(frp backhaul rathole gost wstunnel chisel xray udp2raw ctunnel hysteria sing-box waterwall easytier)
 
 mkdir -p "$OUT"
 FAILED=()

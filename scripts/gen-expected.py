@@ -38,10 +38,13 @@ migrations = len(re.findall(r"^\t`", block, re.M))
 vers = re.findall(r"// (\d+):", block)
 
 # agent engines: every Register call in NewAgentEngines, mapped mechanically
-# (RAIL 1 — fatal on unmapped driver names; preserved verbatim per CORES-2)
+# (RAIL 1 — fatal on unmapped driver names; preserved verbatim per CORES-2).
+# RC10-PREP: the overnight drivers join — Hysteria + Singbox (AGENT-31) and
+# Waterwall (OVERNIGHT-A5, the 18-method node-chain driver); 13 registrations.
 ENGNAME_MAP = {"Matrix": "matrix", "FRP": "frp", "Backhaul": "backhaul", "Xray": "xray",
                "Wg": "wireguard", "Wst": "wstunnel", "Chisel": "chisel", "Gost": "gost",
-               "Rathole": "rathole", "Ctunnel": "ctunnel"}
+               "Rathole": "rathole", "Ctunnel": "ctunnel", "Hysteria": "hysteria",
+               "Singbox": "singbox", "Waterwall": "waterwall"}
 asrc = src(agent_repo, agent_sha, "internal/agent/matrix_driver.go")
 names = re.findall(r"reg\.Register\(New([A-Za-z]+)Driver\(\)\)", asrc)
 engines = []
@@ -53,12 +56,17 @@ for cn in names:
 
 # CORES-2 LEDGER MOVE (RAIL 2): every mapped engine id must exist in the
 # quantum-cores ledger — <id>/MANIFEST.json — unless exempt (see header).
+# RC10-PREP alias: a DRIVER id may differ from the cores repo FOLDER name —
+# the sing-box core carries the dash, the agent's engine id does not (same
+# alias the panel's cores resolution uses since BACKEND-45).
 LEDGER = os.environ.get("QUANTUM_CORES_DIR") or os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "..", "quantum-cores")
+LEDGER_ALIAS = {"singbox": "sing-box"}
 EXEMPT = ("matrix", "wireguard")
 if os.path.isdir(LEDGER):
     unledgered = [e for e in set(engines)
-                  if e not in EXEMPT and not os.path.isfile(os.path.join(LEDGER, e, "MANIFEST.json"))]
+                  if e not in EXEMPT
+                  and not os.path.isfile(os.path.join(LEDGER, LEDGER_ALIAS.get(e, e), "MANIFEST.json"))]
     if unledgered:
         sys.exit("FATAL: engines without a quantum-cores ledger manifest: %s — pack + publish the core (tag <core>-vX.Y.Z in Dark-modem/quantum-cores) before shipping" % ", ".join(sorted(unledgered)))
     print("ledger: engine ids all covered by %s" % os.path.abspath(LEDGER))
