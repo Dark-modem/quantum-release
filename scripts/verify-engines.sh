@@ -63,13 +63,28 @@ cd "$DIR" || { echo "no dir $DIR"; exit 1; }
 FAIL=0; OK=0
 for PK in *-pack; do
     [ -d "$PK" ] || continue
-    # ledger identity: <core>-<version>-pack. RC10-PREP: the version strip
-    # must take the LAST dash (${##*-}), not the first (${#*-}) — dashed
-    # core names (sing-box-1.14.4) made the old first-dash strip yield
-    # VER="box-1.14.4" and a bogus tag. Versions are digits+dots (coresTagRe)
-    # so the last-dash strip is exact for every legal name.
+    # ledger identity: <core>-<version>-pack. RC10-PREP fixed the first-dash
+    # strip for dashed CORE names (sing-box-1.14.4), but RC10 adds naive's
+    # upstream Chromium version shape (154.0.8037.49-5 — a dash INSIDE the
+    # version), so neither a first- nor a last-dash split is universal.
+    # Resolution: match the pack base against the ledger tags themselves
+    # (<core>-<version> == tag without its "-v"); only when no ledger is
+    # loaded (documented downgrade) fall back to the historical last-dash
+    # strip.
     BASE="${PK%-pack}"
-    CORE="${BASE%-*}"; VER="${BASE##*-}"; TAG="$CORE-v$VER"
+    CORE=""; VER=""; TAG=""
+    if [ -n "$LEDGER_MANIFESTS" ]; then
+        while IFS='|' read -r LCAND LTAG _ARCH _SHA; do
+            [ -n "$LCAND" ] || continue
+            VERCAND="${LTAG#${LCAND}-v}"
+            if [ "$BASE" = "$LCAND-$VERCAND" ]; then
+                CORE="$LCAND"; VER="$VERCAND"; TAG="$LTAG"; break
+            fi
+        done <<< "$LEDGER_MANIFESTS"
+    fi
+    if [ -z "$CORE" ]; then
+        CORE="${BASE%-*}"; VER="${BASE##*-}"; TAG="$CORE-v$VER"
+    fi
     if [ -n "$LEDGER_MANIFESTS" ]; then
         if ! printf '%s\n' "$LEDGER_MANIFESTS" | grep -qF "$CORE|$TAG|"; then
             echo "LEDGER FAIL: $PK has no manifest for tag $TAG in quantum-cores — pack + publish the core or drop the pack"
