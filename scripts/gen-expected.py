@@ -40,11 +40,15 @@ vers = re.findall(r"// (\d+):", block)
 # agent engines: every Register call in NewAgentEngines, mapped mechanically
 # (RAIL 1 — fatal on unmapped driver names; preserved verbatim per CORES-2).
 # RC10-PREP: the overnight drivers join — Hysteria + Singbox (AGENT-31) and
-# Waterwall (OVERNIGHT-A5, the 18-method node-chain driver); 13 registrations.
+# Waterwall (OVERNIGHT-A5, the 18-method node-chain driver) and Easytier
+# (OVERNIGHT-A7, the mesh driver over the v2.7.1 core); 14 registrations.
+# naive is a CORE, not an agent engine id: the corpus ships it as the
+# standalone client core (R5 artifact pack) while the server half is the
+# sing-box naive inbound — it never appears in this list by design.
 ENGNAME_MAP = {"Matrix": "matrix", "FRP": "frp", "Backhaul": "backhaul", "Xray": "xray",
                "Wg": "wireguard", "Wst": "wstunnel", "Chisel": "chisel", "Gost": "gost",
                "Rathole": "rathole", "Ctunnel": "ctunnel", "Hysteria": "hysteria",
-               "Singbox": "singbox", "Waterwall": "waterwall"}
+               "Singbox": "singbox", "Waterwall": "waterwall", "Easytier": "easytier"}
 asrc = src(agent_repo, agent_sha, "internal/agent/matrix_driver.go")
 names = re.findall(r"reg\.Register\(New([A-Za-z]+)Driver\(\)\)", asrc)
 engines = []

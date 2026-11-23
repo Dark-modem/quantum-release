@@ -137,7 +137,7 @@ for ARCH in amd64 arm64; do
     # fetched archive IS the artifact — byte-identical to the published
     # quantum-cores release asset (the cores side packaged + digest-verified
     # it: OVERNIGHT-C hysteria/sing-box, C2+A4 waterwall, D2 easytier, the
-    # A5 xray v26.3.27 repackage). The pack re-signs those bytes with the
+    # A5/A8 xray repackage, CORES-6 naive). The pack re-signs those bytes with the
     # ENGINE-ARTIFACT key, so verify-engines.sh's ledger rail (pack sha256
     # == ledger manifest sha256) holds BY CONSTRUCTION. The ledger digest
     # (<ENGINE>-v<VER> assets[linux-<arch>] in QUANTUM_CORES_DIR or the
